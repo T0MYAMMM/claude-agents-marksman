@@ -1,0 +1,39 @@
+services:
+  backend:
+    build: ./backend
+    # App config comes from backend/.env (copy from .env.example and fill in).
+    env_file:
+      - ./backend/.env
+    environment:
+      # Trust the Tailscale CGNAT range AND the Docker bridge, so the containerised
+      # frontend (which calls the API server-side) is not rejected by the network guard.
+      # For a public (non-Tailscale) VPS behind a reverse proxy, set this to "" in
+      # backend/.env and rely on the per-agent API key + your proxy's auth.
+      APP_TAILSCALE_CIDR: "100.64.0.0/10,172.16.0.0/12"
+      # OAuth user token (preferred — a service account has no quota on a personal Drive).
+      # Produced by `python -m scripts.gdrive_oauth`; place it in the repo-local ./secrets.
+      APP_GDRIVE_OAUTH_TOKEN_PATH: /app/secrets/oauth-token.json
+    volumes:
+      # All credentials live in the gitignored ./secrets dir (oauth-token.json, and an
+      # optional service-account key). Read-write so the OAuth token can refresh in place.
+      - ./secrets:/app/secrets:rw
+    # Published on localhost only: the API stays private; the frontend reaches it
+    # internally over the compose network (backend:8000). Expose it via Tailscale serve
+    # or a reverse proxy, not by publishing this port publicly.
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    environment:
+      # API calls happen server-side (SSR + server actions) inside this container,
+      # so it targets the backend by its compose service name.
+      NEXT_PUBLIC_API_BASE: http://backend:8000/api/v1
+    depends_on:
+      - backend
+    # Host port is configurable (default 3000). Put a reverse proxy / Tailscale serve in
+    # front for TLS. Override locally with e.g. `FRONTEND_PORT=3001 docker compose up`.
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    restart: unless-stopped
